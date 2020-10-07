@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2014 Julius Ikkala
+Copyright (c) 2014, 2020 Julius Ikkala
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -24,10 +24,10 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #define get_bit(data, off) (((data)>>(off))&1)
 #define set_bit(data, off, on) (((data)|(1<<(off)))^((!on)<<(off)))
-typedef unsigned char u8;
 
 typedef enum pixel_format
 {
@@ -46,7 +46,8 @@ typedef enum pixel_format
     RGB8,
     RGB16,
     RGBA8,
-    RGBA16
+    RGBA16,
+    RGBA32F,
 } pixel_format;
 
 typedef struct colour
@@ -56,10 +57,9 @@ typedef struct colour
 
 colour formatted_to_intermediate(
     pixel_format data_format,
-    const u8 *data,
+    const uint8_t *data,
     size_t bit_offset
-)
-{
+){
     colour col;
     switch(data_format)
     {
@@ -153,12 +153,19 @@ colour formatted_to_intermediate(
         col.b=(data[4]|((data[5])<<8))/65535.0;
         col.a=(data[6]|((data[7])<<8))/65535.0;
         break;
+    case RGBA32F:
+        col.r=((float*)data)[0];
+        col.g=((float*)data)[1];
+        col.b=((float*)data)[2];
+        col.a=((float*)data)[3];
+        break;
     default:
         col.r=col.g=col.b=col.a=0;
         break;
     }
     return col;
 }
+
 size_t get_pixel_format_bits(pixel_format pf)
 {
     switch(pf)
@@ -187,8 +194,13 @@ size_t get_pixel_format_bits(pixel_format pf)
         return 48;
     case RGBA16:
         return 64;
+    case RGBA32F:
+        return 4*sizeof(float)*8;
+    default:
+        return 0;
     };
 }
+
 void display_help()
 {
     printf(
@@ -210,15 +222,16 @@ void display_help()
         "\tRGB16   (16-bit RGB)\n"
         "\tRGBA8   ( 8-bit RGBA)\n"
         "\tRGBA16  (16-bit RGBA)\n"
+        "\tRGBA32F  (32-bit float RGBA)\n"
     );
 }
+
 int parse_args(
     int argc, char *argv[],
     int *w, int *h,
     pixel_format *pf,
     char **filename
-)
-{
+){
     int width_set=0;
     int height_set=0;
     int pf_set=0;
@@ -229,15 +242,15 @@ int parse_args(
     
     if(argc!=5)
         return 1;
-    
 
-    for(i=1;i<argc;i++)
+    for(i=1; i<argc; i++)
     {
         if(argv[i][0]!='-'||strlen(argv[i])<4)
         {
             parse_fail=1;
             break;
         }
+
         switch(argv[i][1])
         {
         case 'w':
@@ -258,44 +271,29 @@ int parse_args(
             break;
         case 'p':
             pf_set=1;
-            if(     !strcmp("BW1", argv[i]+3))
-                *pf=BW1;
-            else if(!strcmp("BW2", argv[i]+3))
-                *pf=BW2;
-            else if(!strcmp("BW4", argv[i]+3))
-                *pf=BW4;
-            else if(!strcmp("BW8", argv[i]+3))
-                *pf=BW8;
-            else if(!strcmp("BW16", argv[i]+3))
-                *pf=BW16;
-            else if(!strcmp("BWA8", argv[i]+3))
-                *pf=BWA8;
-            else if(!strcmp("BWA16", argv[i]+3))
-                *pf=BWA16;
-            else if(!strcmp("R8", argv[i]+3))
-                *pf=R8;
-            else if(!strcmp("R16", argv[i]+3))
-                *pf=R16;
-            else if(!strcmp("RG8", argv[i]+3))
-                *pf=RG8;
-            else if(!strcmp("RG16", argv[i]+3))
-                *pf=RG16;
-            else if(!strcmp("RGB8", argv[i]+3))
-                *pf=RGB8;
-            else if(!strcmp("RGB16", argv[i]+3))
-                *pf=RGB16;
-            else if(!strcmp("RGBA8", argv[i]+3))
-                *pf=RGBA8;
-            else if(!strcmp("RGBA16", argv[i]+3))
-                *pf=RGBA16;
-            else
-                pf_set=0;
+            if(!strcmp("BW1", argv[i]+3)) *pf=BW1;
+            else if(!strcmp("BW2", argv[i]+3)) *pf=BW2;
+            else if(!strcmp("BW4", argv[i]+3)) *pf=BW4;
+            else if(!strcmp("BW8", argv[i]+3)) *pf=BW8;
+            else if(!strcmp("BW16", argv[i]+3)) *pf=BW16;
+            else if(!strcmp("BWA8", argv[i]+3)) *pf=BWA8;
+            else if(!strcmp("BWA16", argv[i]+3)) *pf=BWA16;
+            else if(!strcmp("R8", argv[i]+3)) *pf=R8;
+            else if(!strcmp("R16", argv[i]+3)) *pf=R16;
+            else if(!strcmp("RG8", argv[i]+3)) *pf=RG8;
+            else if(!strcmp("RG16", argv[i]+3)) *pf=RG16;
+            else if(!strcmp("RGB8", argv[i]+3)) *pf=RGB8;
+            else if(!strcmp("RGB16", argv[i]+3)) *pf=RGB16;
+            else if(!strcmp("RGBA8", argv[i]+3)) *pf=RGBA8;
+            else if(!strcmp("RGBA16", argv[i]+3)) *pf=RGBA16;
+            else if(!strcmp("RGBA32F", argv[i]+3)) *pf=RGBA32F;
+            else pf_set=0;
             break;
         }
     }
+
     if(!width_set||!height_set||!pf_set||!filename_set||parse_fail)
     {
-        printf("Jaa. %d\n", parse_fail);
         if(filename_set)
         {
             free(*filename);
@@ -320,15 +318,17 @@ void init_graphics(int w, int h)
     );
     ren=SDL_CreateRenderer(win, -1, 0);
 }
-void blit_image(int w, int h, pixel_format pf, u8 *data)
+
+void blit_image(int w, int h, pixel_format pf, uint8_t *data)
 {
     SDL_RenderClear(ren);
     
     size_t src_byte=0;
-    u8 src_bit=0;
-    u8 src_bit_step=get_pixel_format_bits(pf);
+    uint8_t src_bit=0;
+    uint8_t src_bit_step=get_pixel_format_bits(pf);
     colour intermediate;
     size_t i=0;
+
     for(i=0;i<w*h;i++)
     {
         intermediate=formatted_to_intermediate(
@@ -351,19 +351,21 @@ void blit_image(int w, int h, pixel_format pf, u8 *data)
     
     SDL_RenderPresent(ren);
 }
+
 void destroy_graphics()
 {
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
 }
+
 int main(int argc, char *argv[])
 {
     int width=0;
     int height=0;
     pixel_format pf=PF_ERROR;
     char *filename=NULL;
-    u8 *image_data=NULL;
+    uint8_t *image_data=NULL;
     FILE *image_file=NULL;
     int i=0, c=0, image_bytes=0;
     SDL_Event e;
@@ -374,16 +376,19 @@ int main(int argc, char *argv[])
         display_help();
         goto end;
     }
+
     image_bytes=width*height*get_pixel_format_bits(pf)/8;
-    image_data=(u8 *)malloc(image_bytes);
+    image_data=(uint8_t *)malloc(image_bytes);
     image_file=fopen(filename, "rb");
+
     if(!image_file)
     {
         printf("File %s does not exist\n", filename);
         goto end;
     }
-    for(i=0;(c=fgetc(image_file))!=EOF&&i<image_bytes;i++)
-        image_data[i]=(u8)c;
+
+    for(i=0; (c=fgetc(image_file)) != EOF && i < image_bytes; i++)
+        image_data[i]=(uint8_t)c;
     fclose(image_file);
 
     init_graphics(width, height);
@@ -398,7 +403,8 @@ int main(int argc, char *argv[])
                 quit=1;
         }
     }
-    destroy_graphics(width, height);
+    destroy_graphics();
+
 end:
     if(image_data)
         free(image_data);
